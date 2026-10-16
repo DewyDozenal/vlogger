@@ -38,7 +38,12 @@ type gui struct {
 	preview     *canvas.Image
 	placeholder *widget.Label
 	status      *widget.Label
+	camera      *widget.Select
 	button      *widget.Button
+
+	// devices are the webcams found at startup, in the same order as the
+	// camera select's options.
+	devices []recorder.Device
 
 	// busy is set while a start or stop is in flight, so the button cannot
 	// queue a second action. Start blocks about a second while ffmpeg settles.
@@ -76,10 +81,65 @@ func newGUI(w fyne.Window) *gui {
 
 	g.status = widget.NewLabelWithStyle("Idle", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
 
+	g.camera = widget.NewSelect(nil, nil)
+	g.camera.PlaceHolder = "No webcam found"
+	g.loadCameras()
+
 	g.button = widget.NewButton("Start recording", g.toggle)
 	g.button.Importance = widget.HighImportance
 
 	return g
+}
+
+// loadCameras fills the camera select with the webcams the kernel exposes
+// now. The list is read once at startup, so a camera plugged in later needs
+// the window to be reopened.
+func (g *gui) loadCameras() {
+	devices, err := recorder.SystemDevices()
+	if err != nil {
+		g.status.SetText("Error: " + err.Error())
+	}
+	g.devices = devices
+
+	labels := make([]string, len(devices))
+	for i, d := range devices {
+		labels[i] = cameraLabel(d)
+	}
+	g.camera.SetOptions(labels)
+	if len(labels) > 0 {
+		g.camera.SetSelectedIndex(0)
+	}
+	g.lockCamera(false)
+}
+
+// lockCamera enables or disables the camera select. It stays disabled when
+// there is no camera to choose, so the placeholder is never offered as a
+// working control.
+func (g *gui) lockCamera(locked bool) {
+	if locked || len(g.devices) == 0 {
+		g.camera.Disable()
+		return
+	}
+	g.camera.Enable()
+}
+
+// cameraLabel names a camera in the select. The path is included because two
+// identical USB cameras report the same driver name.
+func cameraLabel(d recorder.Device) string {
+	if d.Name == "" {
+		return d.Path
+	}
+	return fmt.Sprintf("%s (%s)", d.Name, d.Path)
+}
+
+// selectedDevice returns the path of the camera chosen in the select, or ""
+// if none is available.
+func (g *gui) selectedDevice() string {
+	i := g.camera.SelectedIndex()
+	if i < 0 || i >= len(g.devices) {
+		return ""
+	}
+	return g.devices[i].Path
 }
 
 func (g *gui) layout() fyne.CanvasObject {
@@ -90,16 +150,23 @@ func (g *gui) layout() fyne.CanvasObject {
 		container.NewCenter(g.placeholder),
 		g.preview,
 	)
-	return container.NewBorder(g.status, g.button, nil, nil, body)
+	top := container.NewVBox(g.status, g.camera)
+	return container.NewBorder(top, g.button, nil, nil, body)
 }
 
 // toggle starts a recording if idle or stops the active one. Both calls block
 // while ffmpeg starts or finishes, so they run off the UI thread.
+//
+// The camera select is locked while a session runs, because the device is
+// fixed for the life of a recording. It is read here on the UI thread so the
+// goroutine records from the camera selected when the button was pressed.
 func (g *gui) toggle() {
 	if !g.busy.CompareAndSwap(false, true) {
 		return
 	}
 	g.button.Disable()
+	g.camera.Disable()
+	device := g.selectedDevice()
 
 	go func() {
 		active, err := recorder.Current()
@@ -107,7 +174,9 @@ func (g *gui) toggle() {
 			if active != nil {
 				_, err = recorder.Stop()
 			} else {
-				_, err = recorder.Start(recorder.DefaultOptions(), time.Now())
+				opts := recorder.DefaultOptions()
+				opts.Device = device
+				_, err = recorder.Start(opts, time.Now())
 			}
 		}
 
@@ -117,6 +186,7 @@ func (g *gui) toggle() {
 			if err != nil {
 				g.status.SetText("Error: " + err.Error())
 				g.lastStatus = ""
+				g.lockCamera(false)
 			}
 		})
 	}()
@@ -203,6 +273,7 @@ func (g *gui) apply(recording bool, elapsed time.Duration, file string, frame im
 			g.button.SetText("Start recording")
 			g.button.Importance = widget.HighImportance
 			g.button.Refresh()
+			g.lockCamera(false)
 			g.wasRecording = false
 		}
 		g.setStatus("Idle")
@@ -214,6 +285,7 @@ func (g *gui) apply(recording bool, elapsed time.Duration, file string, frame im
 		g.button.SetText("Stop recording")
 		g.button.Importance = widget.DangerImportance
 		g.button.Refresh()
+		g.lockCamera(true)
 	}
 
 	if frame != nil {

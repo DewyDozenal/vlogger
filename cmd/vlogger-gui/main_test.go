@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2/test"
+	"fyne.io/fyne/v2/widget"
 
 	"vlogger/internal/recorder"
 )
@@ -53,6 +54,49 @@ func TestButtonStartsAndStopsRecording(t *testing.T) {
 	g.sync()
 	if got := g.button.Text; got != "Start recording" {
 		t.Fatalf("button text while idle = %q, want %q", got, "Start recording")
+	}
+}
+
+// TestSelectedDeviceFollowsCameraSelect checks that the device passed to
+// recorder.Start is the one picked in the camera select. It needs no webcam.
+func TestSelectedDeviceFollowsCameraSelect(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+
+	devices := []recorder.Device{
+		{Path: "/dev/video0", Name: "Integrated Camera"},
+		{Path: "/dev/video2", Name: "USB Camera"},
+	}
+	g := &gui{devices: devices}
+	g.camera = widget.NewSelect([]string{cameraLabel(devices[0]), cameraLabel(devices[1])}, nil)
+	g.camera.SetSelectedIndex(0)
+
+	if got := g.selectedDevice(); got != "/dev/video0" {
+		t.Fatalf("selectedDevice() = %q, want /dev/video0", got)
+	}
+	g.camera.SetSelectedIndex(1)
+	if got := g.selectedDevice(); got != "/dev/video2" {
+		t.Fatalf("selectedDevice() after switch = %q, want /dev/video2", got)
+	}
+
+	g.camera.ClearSelected()
+	if got := g.selectedDevice(); got != "" {
+		t.Fatalf("selectedDevice() with nothing selected = %q, want empty", got)
+	}
+}
+
+func TestCameraLabel(t *testing.T) {
+	tests := []struct {
+		dev  recorder.Device
+		want string
+	}{
+		{recorder.Device{Path: "/dev/video0", Name: "Integrated Camera"}, "Integrated Camera (/dev/video0)"},
+		{recorder.Device{Path: "/dev/video4"}, "/dev/video4"},
+	}
+	for _, tc := range tests {
+		if got := cameraLabel(tc.dev); got != tc.want {
+			t.Errorf("cameraLabel(%+v) = %q, want %q", tc.dev, got, tc.want)
+		}
 	}
 }
 
