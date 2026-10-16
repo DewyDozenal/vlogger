@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "blake.webcam-recorder",
+  "name": "Webcam recorder",
+  "version": "0.1.0",
+  "author": "blake",
+  "description": "Start and stop webcam-only recording with the vlogger CLI",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "WebcamRecorder.qml"
+  },
+  "barWidget": {
+    "displayName": "Webcam recorder",
+    "description": "Toggle webcam-only recording (no screen capture)",
+    "category": "Media",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
